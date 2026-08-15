@@ -1,6 +1,2 @@
-
-// 核心渲染逻辑请查看Buffer A。
 // Please check Buffer A for the core rendering logic.
-
-// Buffer B/C/D 与 Image 来自 sonicether 的作品 "Gargantua With HDR Bloom"。
-// Buffer B/C/D and Image  are adapted from sonicether's "Gargantua With HDR Bloom".
+// Buffer B+C+D and Image are adapted from sonicether's "Gargantua With HDR Bloom".
