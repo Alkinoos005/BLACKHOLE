@@ -1,3 +1,4 @@
+//Horizontal gaussian blur leveraging hardware filtering for fewer texture lookups.
 
 vec3 ColorFetch(vec2 coord)
 {
