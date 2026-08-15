@@ -1,5 +1,4 @@
 
-
 vec3 ColorFetch(vec2 coord)
 {
  	return texture(iChannel0, coord).rgb;   
@@ -45,7 +44,5 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
         color /= weightSum;
     }
 
-    fragColor = vec4(color,1.0);
-}
     fragColor = vec4(color,1.0);
 }
