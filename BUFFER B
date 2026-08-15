@@ -1,3 +1,4 @@
+// Settings & Input Definitions
 
 #define iSpin 0.997114514   // Must match iSpin in BufferA!
 const float CONST_M = 0.5; // DON'T CHANGE THIS
