@@ -1,72 +1,131 @@
+// Βlackhole,accretiondisk,general relativity,raymarching
+// This is a fully physically realistic, high-precision, and real-time KN spacetime renderer based on general relativity. 
+// Please refer to Buffer A for operation methods and parameter adjustments.
+// #pragma shader_stage(fragment)
+// #extension GL_EXT_samplerless_texture_functions : enable
+/*
+
+ [ Introduction ]
+    This shader implements physically based ray-tracing in Kerr-Newman spacetime
+    (charged rotating black hole).
+
+    Implements complete spacetime topology: outer/inner event horizons,
+    outer/inner ergospheres, ringularity, and the antiverse.
+
+    Implements the complete maximal extension of Kerr-Newman spacetime. 
+    Rays can traverse the inner horizon into new spacetime domains (white hole regions) 
+    and eventually emerge into another universe.
+
+    Implements physically-based polarization simulation. By calculating 
+    Walker-Penrose constants in curved spacetime, it accurately simulates the 
+    evolution of polarization states from the accretion disk under strong gravity.
+
+    Supports naked singularities. Supports Static, Free-falling, and Custom-velocity observers.
+
+    Fully simulates GR effects: accretion disk, relativistic jets, gravitational
+    lensing, Doppler shift, gravitational redshift, and heat haze refraction.
+
+[ Controls ]
+ Keyboard controls movement, mouse controls camera angle:
+
+     [W] / [S] : Forward / Backward
+     [A] / [D] : Left / Right
+     [R] / [F] : Up / Down (Relative to View)
+     [Q] / [E] : Camera Roll
+     [Mouse]   : Look Around (Pitch/Yaw)
+     
+     Adjustment of movement speed and mouse sensitivity is detailed in bufferB.
+
+[ Performance & Advice ]
+Enabling the grid (iGrid) or maximal extension (iWhitehole) increases the 
+number of integration steps, leading to a drop in frame rate.
+
+Polarization solving and volumetric cloud noise calculations are expensive.
+
+White holes require many steps.
+
+[ Known Issues ]
+This project is a work in progress and is not yet fully finished.
+
+There is currently an unidentified bug in the internal sub-sampling logic
+for the accretion disk and jets, causing banding artifacts.
+
+In maximal extension mode, slight view jumps may occur during the 
+instantaneous transition between white hole and black hole coordinate systems.
+
+The code rain effect is sourced from https://www.shadertoy.com/view/4t3BWl
+
+*/
+// SECTION 1: Render Parameters (Uniforms converted to Defines)
+
 #define iHistoryTex iChannel3
 #define textureQueryLod(s, d) vec2(0.0)
 
-// -----------------------------------------------------------------------------
-// 物理与渲染参数
-// -----------------------------------------------------------------------------
-#define iFovRadians  (60.0 * 0.01745329) // 视野 (弧度) / Field of View (Radians)
-#define iDEBUG                  0      // 调试模式 (0:正常 1:遮罩/网格 2:动量 3:步数热力图 4:频移) / Debug Mode (0:Normal 1:Mask/Grid 2:Momentum 3:Step Heatmap 4:Frequency Shift)
-#define iPrepass                0      // 预渲染低分辨率插值 / Low-res Pre-pass Interpolation
-#define iWhitehole              0      // 最大延拓 (白洞与平行宇宙) / Maximal Extension (White Hole & Parallel Universes)
-#define iInWhichUniverse        0      // 当前宇宙编号 / Current Universe Index
-#define iGrid                   0      // 坐标网格 (0:关 1:黑体 2:固定色) / Coordinate Grid (0:Off 1:Blackbody 2:Fixed Color)
-#define iEnableHeatHaze         1      // 开启热浪折射 / Enable Heat Haze Refraction
-#define iEnableShadowCulling    0      // 开启阴影剔除优化 / Enable Shadow Culling Optimization
-#define iObserverMode           0      // 观者模式 (0:静态 1:落体 2/3:自定义速度) / Observer Mode (0:Static 1:Falling 2/3:Custom Velocity)
-#define iPolarization           0      // 偏振模式 (0:关 1:色相映射 2:滤光片) / Polarization Mode (0:Off 1:Hue Mapping 2:Filter)
-#define iQuality                1.0    // 渲染质量系数 / Rendering Quality Factor
+// Physics and Rendering Parameters
 
-#define iBlackHoleTime          (2.0*iTime) // 物理演化时间 / Black Hole Evolution Time
-#define iBlackHoleMassSol       (1e7)     // 质量 (太阳质量倍数) / Mass (Solar Masses)
-#define iSpin                   0.997114514      // 无量纲自旋 a* / Dimensionless Spin a*
-#define iQ                      0.0       // 无量纲电荷 Q* / Dimensionless Charge Q*
+#define iFovRadians                 (60.0 * 0.01745329) // Field of View (Radians)
+#define iDEBUG                      0        // Debug Mode (0:Normal 1:Mask/Grid 2:Momentum 3:Step Heatmap 4:Frequency Shift)
+#define iPrepass                    0        // Low-res Pre-pass Interpolation
+#define iWhitehole                  0        // Maximal Extension (White Hole & Parallel Universes)
+#define iInWhichUniverse            0        // Current Universe Index
+#define iGrid                       0        // Coordinate Grid (0:Off 1:Blackbody 2:Fixed Color)
+#define iEnableHeatHaze             1        // Enable Heat Haze Refraction
+#define iEnableShadowCulling        0        // Enable Shadow Culling Optimization
+#define iObserverMode               0        // Observer Mode (0:Static 1:Falling 2/3:Custom Velocity)
+#define iPolarization               0        // Polarization Mode (0:Off 1:Hue Mapping 2:Filter)
+#define iQuality                    1.0      // Rendering Quality Factor
 
-#define iMu                     1.0       // 吸积物质比荷 / Specific Charge of Accreting Matter
-#define iAccretionRate          (5e-4)    // 吸积率 / Accretion Rate
+#define iBlackHoleTime              (2.0*iTime) // Black Hole Evolution Time
+#define iBlackHoleMassSol           (1e7)       // Mass (Solar Masses)
+#define iSpin                       0.997114514 // Dimensionless Spin a*
+#define iQ                          0.0         // Dimensionless Charge Q*
 
-#define iBackShiftMax           2.0       // 背景最大频移限制 / Max Background Frequency Shift
-#define iInterRadiusRs          2.0       // 吸积盘内半径 (Rs) / Accretion Disk Inner Radius (Rs)
-#define iOuterRadiusRs          20.0      // 吸积盘外半径 (Rs) / Accretion Disk Outer Radius (Rs)
-#define iThinRs                 0.75      // 吸积盘半厚度 (Rs) / Accretion Disk Half-Thickness (Rs)
-#define iHopper                 0.24      // 吸积盘厚度斜率 / Accretion Disk Thickness Slope
-#define iBrightmut              1.0       // 吸积盘亮度乘数 / Accretion Disk Brightness Multiplier
-#define iDarkmut                0.5       // 吸积盘不透明度 / Accretion Disk Opacity
-#define iReddening              0.3       // 盘红化因子 / Disk Reddening Factor
-#define iSaturation             0.5       // 吸积盘饱和度 / Accretion Disk Saturation
-#define iBlackbodyIntensityExponent 0.5   // 黑体强度指数 / Blackbody Intensity Exponent
-#define iRedShiftColorExponent      3.0   // 频移色温指数 / Redshift Color Temp Exponent
-#define iRedShiftIntensityExponent  4.0   // 频移亮度指数 / Redshift Intensity Exponent
+#define iMu                         1.0         // Specific Charge of Accreting Matter
+#define iAccretionRate              (5e-4)      // Accretion Rate
 
-#define iPolarizationAngle      0.0       // 偏振片角度 / Polarization Filter Angle
-#define iHeatHaze               1.0       // 热浪扰动强度 / Heat Haze Disturbance Strength
-#define iBackgroundBrightmut    1.0       // 背景亮度乘数 / Background Brightness Multiplier
+#define iBackShiftMax               2.0         // Max Background Frequency Shift
+#define iInterRadiusRs              2.0         // Accretion Disk Inner Radius (Rs)
+#define iOuterRadiusRs              20.0        // Accretion Disk Outer Radius (Rs)
+#define iThinRs                     0.75        // Accretion Disk Half-Thickness (Rs)
+#define iHopper                     0.24        // Accretion Disk Thickness Slope
+#define iBrightmut                  1.0         // Accretion Disk Brightness Multiplier
+#define iDarkmut                    0.5         // Accretion Disk Opacity
+#define iReddening                  0.3         // Disk Reddening Factor
+#define iSaturation                 0.5         // Accretion Disk Saturation
+#define iBlackbodyIntensityExponent 0.5         // Blackbody Intensity Exponent
+#define iRedShiftColorExponent      3.0         // Redshift Color Temp Exponent
+#define iRedShiftIntensityExponent  4.0         // Redshift Intensity Exponent
 
-#define iPhotonRingBoost             7.0  // 光子环亮度增亮 / Photon Ring Brightness Boost
-#define iPhotonRingColorTempBoost    2.0  // 光子环色温增益 (蓝移) / Photon Ring Color Temp Boost (Blue Shift)
-#define iBoostRot                    0.75 // 旋转导致的亮度非对称程度 / Brightness Asymmetry Boost for Spin
+#define iPolarizationAngle          0.0         // Polarization Filter Angle
+#define iHeatHaze                   1.0         // Heat Haze Disturbance Strength
+#define iBackgroundBrightmut        1.0         // Background Brightness Multiplier
 
-#define iJetRedShiftIntensityExponent 2.0 // 喷流频移亮度指数 / Jet Redshift Intensity Exponent
-#define iJetBrightmut           1.0       // 喷流亮度乘数 / Jet Brightness Multiplier
-#define iJetSaturation          0.0       // 喷流饱和度 / Jet Saturation
-#define iJetShiftMax            3.0       // 喷流最大蓝移限制 / Jet Max Blue Shift
+#define iPhotonRingBoost            7.0  // Photon Ring Brightness Boost
+#define iPhotonRingColorTempBoost   2.0  // Photon Ring Color Temp Boost (Blue Shift)
+#define iBoostRot                   0.75 // Brightness Asymmetry Boost for Spin
 
-#define iBlendWeight            0.5       // TAA 混合权重 / TAA Blend Weight
-#define iCameraVelocity         vec3(0.0) // 相机坐标速度 / Camera Coordinate Velocity
+#define iJetRedShiftIntensityExponent 2.0 // Jet Redshift Intensity Exponent
+#define iJetBrightmut               1.0         // Jet Brightness Multiplier
+#define iJetSaturation              0.0         // Jet Saturation
+#define iJetShiftMax                3.0         // Jet Max Blue Shift
 
-#define HAZE_STRENGTH           0.3     // 热浪折射强度 / Heat Haze Refraction Strength
-#define HAZE_SCALE              5.2     // 噪声频率 / Heat Haze Noise Scale
-#define HAZE_DENSITY_THRESHOLD  0.1     // 密度阈值 / Heat Haze Density Threshold
-#define HAZE_LAYER_THICKNESS    0.8     // 层厚度范围 / Heat Haze Layer Thickness
-#define HAZE_RADIAL_EXPAND      0.8     // 径向范围倍数 / Heat Haze Radial Expansion
-#define HAZE_ROT_SPEED          0.1     // 吸积盘热气旋转速度 / Disk Hot Gas Rotation Speed
-#define HAZE_FLOW_SPEED         0.15    // 喷流流速系数 / Jet Flow Speed Coefficient
-#define HAZE_PROBE_STEPS        12      // 探测步数 / Heat Haze Probe Steps
-#define HAZE_STEP_SIZE          0.06    // 步长 (Rg) / Heat Haze Step Size (Rg)
-#define HAZE_DEBUG_MASK         0       // 开启热气遮罩调试 / Enable Heat Gas Mask Debug
-#define HAZE_DEBUG_VECTOR       0       // 开启力场向量调试 / Enable Force Field Vector Debug
-#define HAZE_DISK_DENSITY_REF   (iBrightmut * 30.0) // 盘密度参考值 / Disk Density Reference
-#define HAZE_JET_DENSITY_REF    (iJetBrightmut * 1.0) // 喷流密度参考值 / Jet Density Reference
-#define SHADOW_SIZE_MULTIPLIER  0.995   // 阴影半径微调系数 / Multiplier for Shadow Radius
+#define iBlendWeight                0.5         // TAA Blend Weight
+#define iCameraVelocity             vec3(0.0)   // Camera Coordinate Velocity
+
+#define HAZE_STRENGTH               0.3     // Heat Haze Refraction Strength
+#define HAZE_SCALE                  5.2     // Heat Haze Noise Scale
+#define HAZE_DENSITY_THRESHOLD      0.1     // Heat Haze Density Threshold
+#define HAZE_LAYER_THICKNESS        0.8     // Heat Haze Layer Thickness
+#define HAZE_RADIAL_EXPAND          0.8     // Heat Haze Radial Expansion
+#define HAZE_ROT_SPEED              0.1     // Disk Hot Gas Rotation Speed
+#define HAZE_FLOW_SPEED             0.15    // Jet Flow Speed Coefficient
+#define HAZE_PROBE_STEPS            12      // Heat Haze Probe Steps
+#define HAZE_STEP_SIZE              0.06    // Heat Haze Step Size (Rg)
+#define HAZE_DEBUG_MASK             0       // Enable Heat Gas Mask Debug
+#define HAZE_DEBUG_VECTOR           0       // Enable Force Field Vector Debug
+#define HAZE_DISK_DENSITY_REF       (iBrightmut * 30.0) // Disk Density Reference
+#define HAZE_JET_DENSITY_REF        (iJetBrightmut * 1.0) // Jet Density Reference
+#define SHADOW_SIZE_MULTIPLIER      0.995   // Multiplier for Shadow Radius
 
 vec3 FragUvToDir(vec2 FragUv, float Fov, vec2 NdcResolution) {
     return normalize(vec3(Fov * (2.0 * FragUv.x - 1.0),
@@ -79,9 +138,7 @@ const float k2Pi         = 6.283185307179586476925286766559;
 const float CONST_M      = 0.5; // [PHYS] Mass M = 0.5, DONT CHANGE THIS
 const float EPSILON      = 1e-6;
 
-// =============================================================================
-// SECTION 2: 基础工具函数 (噪声、插值、随机、背景)
-// =============================================================================
+// SECTION 2: Basic Utility Functions (Noise, Interpolation, Randomness, Background)
 
 float det3(vec3 a, vec3 b, vec3 c) {
     return dot(a, cross(b, c));
@@ -137,7 +194,7 @@ float Shape(float x, float Alpha, float Beta) {
     return k * pow(x, Alpha) * pow(1.0 - x, Beta);
 }
 
-// Shadertoy 背景生成保留
+// Shadertoy background generation (retained)
 vec4 hash43x(vec3 p) {
     uvec3 x = uvec3(ivec3(p));
     x = 1103515245U*((x.xyz >> 1U)^(x.yzx));
@@ -237,9 +294,7 @@ vec4 ApplyToneMapping(vec4 Result,float shift) {
     return Mapped;
 }
 
-// =============================================================================
-// SECTION 4: 广相计算。Y为自旋方向，ins/outgoing方向笛卡尔形式kerrscild系。+++-。
-// =============================================================================
+// SECTION 4: General Relativity Calculation.Y is the spin axis,incoming/outgoing directions in Cartesian Kerr-Schild coordinates.Metric signature
 
 float GetKeplerianAngularVelocity(float Radius, float Rs, float PhysicalSpinA, float PhysicalQ) {
     float M = 0.5 * Rs; 
@@ -570,9 +625,8 @@ vec2 SolvePolarization(vec2 K_photon, vec2 K_right, vec2 K_up) {
     return (mag > 1e-19) ? (result / mag) : vec2(1.0, 0.0);
 }
 
-// =============================================================================
-// 5.积分器
-// =============================================================================
+// 5. Integrator
+
 struct State { vec4 X; vec4 P; };
 
 void ApplyHamiltonianCorrection(inout vec4 P, vec4 X, float E, float PhysicalSpinA, float PhysicalQ, float fade, float r_sign, bool isOutgoing) {
@@ -649,9 +703,7 @@ void StepGeodesicRK4_Optimized(inout vec4 X, inout vec4 P, float E, float dt, fl
     X = finalX; P = finalP;
 }
 
-// =============================================================================
-// SECTION 6: 热折射，吸积盘与喷流,经纬网
-// =============================================================================
+// SECTION 6: Thermal Refraction,Accretion Disk & Jets,Latitude-Longitude Grid
 
 float HazeNoise01(vec3 p) { return PerlinNoise(p) * 0.5 + 0.5; }
 float GetBaseNoise(vec3 p) {
@@ -753,7 +805,7 @@ vec4 DiskColor(vec4 BaseColor, vec4 RayPos, vec4 LastRayPos, vec4 iP_cov, vec4 l
     vec3 StartPos = LastRayPos.xyz; vec3 EndPos = RayPos.xyz; vec3 ChordDelta = EndPos - StartPos;
     vec3 ChordDir = length(ChordDelta) > 1e-8 ? normalize(ChordDelta) : vec3(0.0, 1.0, 0.0);
 
-    // --- 【固有距离（Proper Distance）】 ---
+    // Proper Distance
     vec3 MidPos = 0.5 * (StartPos + EndPos);
     KerrGeometry geo_mid; ComputeGeometryScalars(MidPos, PhysicalSpinA, PhysicalQ, 1.0, 1.0, isoutgoing, geo_mid);
     float proper_dist = sqrt(max(1e-9, dot(ChordDelta, ChordDelta) + geo_mid.f * pow(dot(geo_mid.l_down.xyz, ChordDelta), 2.0)));
@@ -1094,10 +1146,7 @@ vec4 GridColor(vec4 BaseColor, vec4 RayPos, vec4 LastRayPos, vec4 iP_cov, float 
     return CurrentResult;
 }
 
-// =============================================================================
-// SECTION 7: KN阴影计算
-// =============================================================================
-
+// SECTION 7: KN Shadow Calculation
 bool IsAccretionDiskVisible(float InterR, float OuterR, float Thin, float Hopper, float Bright, float Dark) {
     if (InterR >= OuterR) return false;
     if (Thin <= 0.0 && Hopper == 0.0) return false;
@@ -1141,9 +1190,8 @@ float GetShadowHalfAngleRN(float r, float M, float Q, int ObserverMode) {
     return GetDropFrameAngle(sin_theta_stat, ((r >= r_ps - 1e-4) ? 1.0 : -1.0) * sqrt(max(0.0, 1.0 - sin_theta_stat * sin_theta_stat)), r, M, Q, 0.0, ObserverMode);
 }
 
-// =============================================================================
 // SECTION 8: main
-// =============================================================================
+
 
 struct TraceResult {
     vec3  EscapeDir;      
@@ -1489,8 +1537,8 @@ float sdLineTopMap(vec2 p, vec2 a, vec2 b) {
     return length(pa - ba * h);
 }
 vec4 RenderTopologyMap(vec2 uv, vec3 camPos, vec3 camDir) {
-    // 画布设置：使用屏幕相对 UV 进行映射，确保无视实际渲染分辨率正确停靠在右上角
-    vec2 canvas_rel_sz = vec2(0.28, 0.25) * 1.0; // 占用屏幕长宽的比例，受配置项控制
+   // Canvas setup: Uses screen-relative UV for mapping, ensuring it stays correctly docked in the top-right corner regardless of actual render resolution
+    vec2 canvas_rel_sz = vec2(0.28, 0.25) * 1.0; // Proportion of screen width and height occupied, controlled by configuration
     vec2 canvas_rel_p0 = vec2(0.98 - canvas_rel_sz.x, 0.98 - canvas_rel_sz.y);
     
     if (uv.x < canvas_rel_p0.x || uv.x > canvas_rel_p0.x + canvas_rel_sz.x ||
@@ -1498,12 +1546,12 @@ vec4 RenderTopologyMap(vec2 uv, vec3 camPos, vec3 camDir) {
         return vec4(0.0);
     }
 
-    // 映射到一个固定大小的虚拟内部坐标系进行计算
+    // Map to a fixed-size virtual internal coordinate system for calculations
     vec2 canvas_sz = vec2(600.0, 300.0);
     vec2 fragCoord = (uv - canvas_rel_p0) / canvas_rel_sz * canvas_sz;
     vec2 canvas_p0 = vec2(0.0);
 
-    // 提取物理参数
+    // Extract physical parameters
     float M = CONST_M;
     float a = iSpin*0.5;
     float Q = iQ*0.5;
@@ -1515,33 +1563,33 @@ vec4 RenderTopologyMap(vec2 uv, vec3 camPos, vec3 camDir) {
     float halfWidth = canvas_sz.x * 0.5;
     float scale = min(halfWidth, canvas_sz.y) / (2.0 * displayRadius);
 
-    vec2 centerSide = canvas_p0 + vec2(0.0, canvas_sz.y * 0.5); // 左侧图左边不留空位，中轴直接对齐左边界
+    vec2 centerSide = canvas_p0 + vec2(0.0, canvas_sz.y * 0.5); // No margin on the left for the left view; central axis aligns directly with the left border
     vec2 centerTop = canvas_p0 + vec2(halfWidth * 1.5, canvas_sz.y * 0.5);
 
-    // 背景颜色
+    // Background color
     vec4 color = vec4(15.0/255.0, 20.0/255.0, 30.0/255.0, 0.9);
 
-    // 辅助网格和标题 (简单直线)
+    // Auxiliary grid and title (simple straight lines)
     vec4 axisColor = vec4(100.0/255.0, 100.0/255.0, 100.0/255.0, 0.6);
     if (abs(fragCoord.y - centerSide.y) < 1.0 && fragCoord.x > centerSide.x && fragCoord.x < canvas_p0.x + halfWidth) color = mix(color, axisColor, axisColor.a);
     if (abs(fragCoord.x - centerSide.x) < 1.0) color = mix(color, axisColor, axisColor.a);
     if (abs(fragCoord.y - centerTop.y) < 1.0 && fragCoord.x > canvas_p0.x + halfWidth) color = mix(color, axisColor, axisColor.a);
     if (abs(fragCoord.x - centerTop.x) < 1.0) color = mix(color, axisColor, axisColor.a);
-    if (abs(fragCoord.x - (canvas_p0.x + halfWidth)) < 1.5) color = mix(color, vec4(0.8, 0.8, 0.8, 1.0), 1.0); // 视图分隔线
+    if (abs(fragCoord.x - (canvas_p0.x + halfWidth)) < 1.5) color = mix(color, vec4(0.8, 0.8, 0.8, 1.0), 1.0); // View separator line
 
-    // 几何边界求解
+    // Geometric boundary solver
     float delta_disc = M*M - a2 - Q2;
     bool isNaked = (delta_disc < 0.0);
     float r_out = isNaked ? 0.0 : M + sqrt(delta_disc);
     float r_in  = isNaked ? 0.0 : M - sqrt(delta_disc);
 
-    // 1. 左图 Side View (Y-X Plane)
+    // 1. Left View: Side View (Y-X Plane)
     if (fragCoord.x > centerSide.x && fragCoord.x < canvas_p0.x + halfWidth) {
         vec2 localP = (vec2(fragCoord.x, fragCoord.y) - centerSide) / vec2(scale, -scale);
         float X = localP.x; // rho
         float Y = localP.y; // z
         
-        // 求该像素在 Kerr-Schild 坐标中的解析 r
+        // Solve for analytical r of this pixel in Kerr-Schild coordinates
         float rho2 = X * X;
         float y2 = Y * Y;
         float b_ks = rho2 + y2 - a2;
@@ -1553,7 +1601,7 @@ vec4 RenderTopologyMap(vec2 uv, vec3 camPos, vec3 camDir) {
         float cosT2 = cosT * cosT;
         float sinT2 = max(0.0, 1.0 - cosT2);
 
-        // 静界 (Ergosphere)
+        // Ergosphere
         float ergo_disc = M*M - a2*cosT2 - Q2;
         if (ergo_disc >= 0.0) {
             float r_ergo_out = M + sqrt(ergo_disc);
@@ -1564,7 +1612,7 @@ vec4 RenderTopologyMap(vec2 uv, vec3 camPos, vec3 camDir) {
             if (dr_in < 1.5)  color = mix(color, vec4(1.0, 200.0/255.0, 50.0/255.0, 0.8), 1.0 - smoothstep(0.5, 1.5, dr_in));
         }
 
-        // 视界 (Horizons)
+        // Horizons
         if (!isNaked) {
             float dr_out = abs(r_px - r_out) * scale;
             float dr_in  = abs(r_px - r_in) * scale;
@@ -1572,17 +1620,17 @@ vec4 RenderTopologyMap(vec2 uv, vec3 camPos, vec3 camDir) {
             if (dr_in < 2.0)  color = mix(color, vec4(80.0/255.0, 125.0/255.0, 1.0, 1.0), 1.0 - smoothstep(1.0, 2.0, dr_in));
         }
 
-        // CTC 边界 (以多项式隐函数零点逼近)
+        // CTC boundary (approximated by implicit polynomial zero-crossing)
         float G = (r2 + a2) * (r2 + a2*cosT2) + a2*sinT2*(2.0*M*r_px - Q2);
-        float dGdr = 2.0*r_px*(r2+a2*cosT2) + (r2+a2)*2.0*r_px + a2*sinT2*2.0*M; // 近似导数
+        float dGdr = 2.0*r_px*(r2+a2*cosT2) + (r2+a2)*2.0*r_px + a2*sinT2*2.0*M; // Approximate derivative
         float dr_ctc = abs(G / max(1e-5, dGdr)) * scale;
         if (dr_ctc < 1.5) color = mix(color, vec4(200.0/255.0, 100.0/255.0, 1.0, 0.1), 1.0 - smoothstep(0.5, 1.5, dr_ctc));
 
-        // 奇环 (Singularity)
+        // Ring Singularity
         if (length(localP - vec2(abs(a), 0.0)) * scale < 4.0) color = mix(color, vec4(1.0, 0.0, 1.0, 1.0), 1.0);
     }
 
-    // 2. 右图 Top View (X-Z Plane)
+    // 2. Right View: Top View (X-Z Plane)
     if (fragCoord.x > canvas_p0.x + halfWidth) {
         vec2 localP = (vec2(fragCoord.x, fragCoord.y) - centerTop) / vec2(scale, -scale);
         float rho = length(localP);
@@ -1602,17 +1650,17 @@ vec4 RenderTopologyMap(vec2 uv, vec3 camPos, vec3 camDir) {
             if (abs(rho - R_in)*scale < 2.0)  color = mix(color, vec4(100.0/255.0, 150.0/255.0, 1.0, 1.0), 1.0 - smoothstep(1.0, 2.0, abs(rho - R_in)*scale));
         }
 
-        // 奇环 (Singularity)
+        // Ring Singularity
         if (abs(rho - abs(a))*scale < 2.0) color = mix(color, vec4(1.0, 0.0, 1.0, 1.0), 1.0 - smoothstep(1.0, 2.0, abs(rho - abs(a))*scale));
     }
 
-    // 3. 相机坐标与朝向点绘制
+    // 3. Render camera position and orientation indicator point
     vec4 camColor = vec4(1.0, 1.0, 1.0, 1.0);
     float rho_cam = sqrt(camPos.x*camPos.x + camPos.z*camPos.z);
     float drho = (rho_cam > 1e-6) ? ((camPos.x*camDir.x + camPos.z*camDir.z)/rho_cam) : length(camDir.xz);
     float camLineLen = max(1.5 * M, camDist * 0.15);
 
-    // 左图的线与点
+    // Camera line and point for the Left View (Side View)
     vec2 ptCamS = centerSide + vec2(rho_cam, -camPos.y) * scale;
     vec2 ptDirS = centerSide + vec2(rho_cam + drho*camLineLen, -(camPos.y + camDir.y*camLineLen)) * scale;
     if (fragCoord.x < canvas_p0.x + halfWidth && fragCoord.x > centerSide.x) {
@@ -1620,7 +1668,7 @@ vec4 RenderTopologyMap(vec2 uv, vec3 camPos, vec3 camDir) {
         if (length(fragCoord - ptCamS) < 4.0) color = mix(color, camColor, 1.0);
     }
 
-    // 右图的线与点
+    // Camera line and point for the Right View (Top View)
     vec2 ptCamT = centerTop + vec2(camPos.x, camPos.z) * scale;
     vec2 ptDirT = centerTop + vec2(camPos.x + camDir.x*camLineLen, camPos.z + camDir.z*camLineLen) * scale;
     if (fragCoord.x > canvas_p0.x + halfWidth) {
@@ -1630,18 +1678,18 @@ vec4 RenderTopologyMap(vec2 uv, vec3 camPos, vec3 camDir) {
 
     return color;
 }
-// =============================================================================
-// SECTION 9: mainImage (Shadertoy 入口)
-// =============================================================================
+
+// SECTION 9: mainImage (Shadertoy Entry Point)
+
 
 void mainImage( out vec4 FragColor, in vec2 FragCoord )
 {
     vec2 iResolution = iResolution.xy;
     vec2 Uv = FragCoord.xy / iResolution.xy;
     
-    // 读取 Buffer B 相机数据
+    // Read camera data from Buffer B
     int iBufWidth = int(iChannelResolution[2].x);
-    // 注意：假设 Buffer B 绑定在 iChannel2（视你的 Shadertoy 纹理槽设置而定）
+    // Note: Assumes Buffer B is bound to iChannel2 (depending on your Shadertoy texture slot configuration)
     vec3 CamPosWorld   = texelFetch(iChannel2, ivec2(iBufWidth - 3, 0), 0).xyz;
     vec3 CamRightWorld = texelFetch(iChannel2, ivec2(iBufWidth - 2, 0), 0).xyz;
     vec3 CamUpWorld    = texelFetch(iChannel2, ivec2(iBufWidth - 1, 0), 0).xyz;
@@ -1679,16 +1727,16 @@ void mainImage( out vec4 FragColor, in vec2 FragCoord )
     vec3 CurrentDir = res.EscapeDir;
     float CurrentShift = res.FreqShift;
 
-    // 对背景进行采样（使用 Shadertoy 星空或雨矩阵）
+    // Sample the background (using Shadertoy starfield or rain matrix)
     if (CurrentStatus > 0.5 && CurrentStatus < 20.0 && CurrentStatus != 3.0) 
     {
         vec4 Bg = SampleBackground(CurrentDir, CurrentShift, CurrentStatus);
         FinalColor += 0.9999 * Bg * vec4(pow((1.0 - FinalColor.a),1.0+0.3*(1.0-1.0)),pow((1.0 - FinalColor.a),1.0+0.3*(3.0-1.0)),pow((1.0 - FinalColor.a),1.0+0.3*(6.0-1.0)),1.0);
     }
 
-    FinalColor = ApplyToneMapping(FinalColor, CurrentShift);
+   FinalColor = ApplyToneMapping(FinalColor, CurrentShift);
     vec3 mapCamDir = normalize((iInverseCamRot * vec4(0.0, 0.0, -1.0, 0.0)).xyz);
-    // 渲染拓扑UI并覆盖 (使用基于真实像素分辨率归一化的屏幕空间坐标)
+    // Render topology UI and composite overlay (using screen-space coordinates normalized by true pixel resolution)
     vec2 screenUV = Uv;
     vec4 mapCol = RenderTopologyMap(screenUV, vec3(CamPosWorld.x,-CamPosWorld.y,-CamPosWorld.z), vec3(mapCamDir.x,-mapCamDir.y,-mapCamDir.z));
     FinalColor.rgb = mix(FinalColor.rgb, mapCol.rgb, mapCol.a);
