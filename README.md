@@ -2,5 +2,5 @@
 
 This is a fail attempt to a blackhole
 
-The inspiration behind it came to me after I saw the shadertoy project of the creator  jein lean
+The inspiration behind it came to me after I saw the shadertoy project ...
 
