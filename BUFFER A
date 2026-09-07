@@ -5,7 +5,7 @@
 // #extension GL_EXT_samplerless_texture_functions : enable
 /*
 
-/* The buffer A is more about the structure of the Blackhole project
+/* The buffer A is more about the structure of the Blackhole project */
 
  [ Introduction ]
     This shader implements physically based ray-tracing in Kerr-Newman spacetime
