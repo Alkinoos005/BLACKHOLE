@@ -4,8 +4,10 @@ BLACKHOLE is a high-performance C++ relativistic ray tracing engine designed to 
 light deflection and accretion disk dynamics in curved spacetime around massive compact objects.
 
 FeaturesGeneral Relativity Solvers: Ray-marching along null geodesics in Schwarzschild (non-rotating) 
-and Kerr (rotating) metrics using Runge-Kutta integration (RK4 / RKF45).Accretion Disk Rendering: Procedural and textured accretion disks with relativistic Doppler beaming 
-and gravitational redshift effects.Camera Systems: Pinhole and curved-space cameras supporting adaptive step-size integration for high numerical accuracy near the photon sphere.
+and Kerr (rotating) metrics using Runge-Kutta integration (RK4 / RKF45).
+Accretion Disk Rendering: Procedural and textured accretion disks with relativistic Doppler beaming 
+and gravitational redshift effects.Camera Systems: 
+Pinhole and curved-space cameras supporting adaptive step-size integration for high numerical accuracy near the photon sphere.
 Multi-threaded Architecture: Highly parallelized ray tracing utilizing OpenMP and C++20 standard concurrency primitives.Output Export: High-dynamic-range (HDR) rendering output exported directly to .ppm, .png, or .exr file formats.
 Technical OverviewThe engine integrates the geodesic equation in curved spacetime governed by the metric tensor $g_{\mu\nu}$:$$\frac{d^2 x^\mu}{d\lambda^2} + \Gamma^\mu_{\alpha\beta} \frac{dx^\alpha}{d\lambda} \frac{dx^\beta}{d\lambda} = 0$$Where:$x^\mu$ represents the spacetime position coordinates $(t, r, \theta, \phi)$.$\lambda$ is the affine parameter along the photon path.$\Gamma^\mu_{\alpha\beta}$ denotes the Christoffel symbols derived from the spacetime metric.
 PrerequisitesEnsure you have the following installed on your host system:DependencyMinimum VersionNotesC++ CompilerGCC 11 / Clang 13 / MSVC 2022C++20 support requiredCMake3.20+Build configurationOpenMP4.5+Parallel executionBuilding from SourceBash# Clone the repository
@@ -16,6 +18,7 @@ cd BLACKHOLE
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 
 # Compile project executable
+
 cmake --build build --config Release -j $(nproc)
 Quick StartRun the simulation with default Schwarzschild parameters:Bash./build/blackhole --metric kerr --spin 0.95 --resolution 1920x1080 --output render.png
 Configuration OptionsPlaintext  -m, --metric <type>       Metric type: 'schwarzschild' or 'kerr' (default: kerr)
