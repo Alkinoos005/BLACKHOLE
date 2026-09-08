@@ -2,3 +2,4 @@ This is a more concluded documentation for my work on this project
 
 BLACKHOLE is a high-performance C++ relativistic ray tracing engine designed to simulate gravitational lensing, 
 light deflection and accretion disk dynamics in curved spacetime around massive compact objects.
+
